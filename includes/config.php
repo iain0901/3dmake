@@ -1,62 +1,68 @@
 <?php
-// 資料庫配置
+// 資料庫設定
 define('DB_HOST', 'localhost');
 define('DB_NAME', '3dstumake');
-define('DB_USER', '3dstumake');
-define('DB_PASS', 'BCNBhXC5Jy7hc4h4');
+define('DB_USER', 'root');
+define('DB_PASS', '');
+define('DB_CHARSET', 'utf8mb4');
 
-// 安全配置
-define('CSRF_EXPIRATION', 7200); // 2小時
-define('SESSION_LIFETIME', 7200);
-define('COOKIE_LIFETIME', 2592000); // 30天
-define('API_RATE_LIMIT', 1000); // 每小時請求限制
+// 網站設定
+define('SITE_NAME', '3D列印服務平台');
+define('SITE_URL', 'http://localhost/3dstu');
+define('UPLOAD_PATH', __DIR__ . '/../uploads');
+define('MAX_FILE_SIZE', 10 * 1024 * 1024); // 10MB
 
-// 檔案上傳配置
-define('MAX_UPLOAD_SIZE', 5242880); // 5MB
-define('ALLOWED_EXTENSIONS', ['jpg', 'jpeg', 'png', 'gif']);
-define('UPLOAD_DIR', __DIR__ . '/../uploads');
+// 印幣設定
+define('COIN_EXCHANGE_RATE', 100); // 1元 = 100印幣
+define('MIN_DEPOSIT', 100); // 最低儲值金額
+define('MAX_DEPOSIT', 10000); // 最高儲值金額
 
-// 設置時區
-date_default_timezone_set('Asia/Taipei');
+// 安全設定
+define('SESSION_LIFETIME', 7200); // 2小時
+define('REMEMBER_ME_LIFETIME', 30 * 24 * 3600); // 30天
+define('MAX_LOGIN_ATTEMPTS', 5);
+define('LOCKOUT_TIME', 15 * 60); // 15分鐘
 
-// 確保日誌目錄存在
-$log_dir = __DIR__ . '/../logs';
-if (!file_exists($log_dir)) {
-    mkdir($log_dir, 0777, true);
-}
-
-// 錯誤報告
-error_reporting(E_ALL);
-ini_set('display_errors', 1);
-ini_set('log_errors', 1);
-ini_set('error_log', $log_dir . '/error.log');
-
-// 會話安全配置
+// 初始化session
 ini_set('session.cookie_httponly', 1);
-ini_set('session.cookie_secure', 1);
+ini_set('session.cookie_secure', isset($_SERVER['HTTPS']));
 ini_set('session.cookie_samesite', 'Lax');
-ini_set('session.use_strict_mode', 1);
-ini_set('session.use_only_cookies', 1);
 ini_set('session.gc_maxlifetime', SESSION_LIFETIME);
-
-// Cookie 安全配置
-ini_set('session.cookie_lifetime', COOKIE_LIFETIME);
 session_set_cookie_params([
-    'lifetime' => COOKIE_LIFETIME,
+    'lifetime' => SESSION_LIFETIME,
     'path' => '/',
     'domain' => '',
-    'secure' => true,
+    'secure' => isset($_SERVER['HTTPS']),
     'httponly' => true,
     'samesite' => 'Lax'
 ]);
 
-session_start();
+if (session_status() === PHP_SESSION_NONE) {
+    session_start();
+}
 
-// 驗證會話ID
-if (!isset($_SESSION['created'])) {
-    session_regenerate_id(true);
-    $_SESSION['created'] = time();
-} else if (time() - $_SESSION['created'] > SESSION_LIFETIME) {
-    session_regenerate_id(true);
-    $_SESSION['created'] = time();
+// 設定時區
+date_default_timezone_set('Asia/Taipei');
+
+// 錯誤處理
+error_reporting(E_ALL);
+ini_set('display_errors', 0);
+ini_set('log_errors', 1);
+ini_set('error_log', __DIR__ . '/../logs/error.log');
+
+// 確保日誌目錄存在
+if (!file_exists(__DIR__ . '/../logs')) {
+    mkdir(__DIR__ . '/../logs', 0777, true);
+}
+
+// 確保上傳目錄存在
+$upload_dirs = [
+    UPLOAD_PATH . '/images',
+    UPLOAD_PATH . '/models'
+];
+
+foreach ($upload_dirs as $dir) {
+    if (!file_exists($dir)) {
+        mkdir($dir, 0777, true);
+    }
 } 

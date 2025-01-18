@@ -2,155 +2,197 @@
 require_once '../../includes/config.php';
 require_once '../../includes/db.php';
 
-$db = new Database();
-$conn = $db->getConnection();
-
 try {
+    $db = Database::getInstance();
+    $conn = $db->getConnection();
+    
     // 開始事務
     $conn->beginTransaction();
-
-    // 創建用戶表
+    
+    // 創建專案類型表
     $conn->exec("
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INT PRIMARY KEY AUTO_INCREMENT,
-            username VARCHAR(50) NOT NULL UNIQUE,
-            email VARCHAR(255) NOT NULL UNIQUE,
-            password VARCHAR(255) NOT NULL,
-            role ENUM('user', 'creator', 'admin') DEFAULT 'user',
-            email_verified BOOLEAN DEFAULT FALSE,
-            avatar_url VARCHAR(255),
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_login_at TIMESTAMP NULL,
-            failed_login_attempts INT DEFAULT 0,
-            account_locked_until TIMESTAMP NULL
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    ");
-
-    // 創建許願表
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS wishes (
-            wish_id INT PRIMARY KEY AUTO_INCREMENT,
-            user_id INT NOT NULL,
-            title VARCHAR(255) NOT NULL,
+        CREATE TABLE IF NOT EXISTS project_types (
+            type_id INT PRIMARY KEY AUTO_INCREMENT,
+            name VARCHAR(50) NOT NULL,
             description TEXT,
-            image_url VARCHAR(255),
-            status ENUM('pending', 'accepted', 'completed', 'rejected') DEFAULT 'pending',
-            view_count INT DEFAULT 0,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_updated_at TIMESTAMP NULL,
-            completed_image_url VARCHAR(255),
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-
+    
+    // 插入預設專案類型
+    $conn->exec("
+        INSERT INTO project_types (name, description) 
+        SELECT * FROM (
+            SELECT 'model_request' as name, '尋找3D模型' as description
+            UNION ALL
+            SELECT 'print_request', '尋找代印服務'
+        ) AS tmp
+        WHERE NOT EXISTS (
+            SELECT 1 FROM project_types
+        );
+    ");
+    
+    // 創建專案表
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS projects (
+            project_id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            type_id INT NOT NULL,
+            title VARCHAR(255) NOT NULL,
+            description TEXT NOT NULL,
+            image_url VARCHAR(255),
+            model_url VARCHAR(255),
+            model_file VARCHAR(255),
+            print_requirements TEXT,
+            budget DECIMAL(10,2),
+            deadline DATE,
+            reward_amount DECIMAL(10,2) DEFAULT 0,
+            reward_status ENUM('pending', 'locked', 'paid', 'cancelled'),
+            reward_paid_at TIMESTAMP NULL,
+            status ENUM('pending', 'in_progress', 'completed', 'cancelled') DEFAULT 'pending',
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (type_id) REFERENCES project_types(type_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+    
+    // 創建用途類型表
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS usage_types (
+            type_id INT PRIMARY KEY AUTO_INCREMENT,
+            name VARCHAR(50) NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+    
+    // 插入預設用途類型
+    $conn->exec("
+        INSERT INTO usage_types (name, description) 
+        SELECT * FROM (
+            SELECT 'education' as name, '教育用途' as description
+            UNION ALL SELECT 'research', '研究用途'
+            UNION ALL SELECT 'public_welfare', '公益用途'
+            UNION ALL SELECT 'personal', '個人自用'
+            UNION ALL SELECT 'commercial', '商業用途'
+            UNION ALL SELECT 'other', '其他用途'
+        ) AS tmp
+        WHERE NOT EXISTS (
+            SELECT 1 FROM usage_types
+        );
+    ");
+    
+    // 創建專案用途關聯表
+    $conn->exec("
+        CREATE TABLE IF NOT EXISTS project_usages (
+            project_id INT NOT NULL,
+            usage_type_id INT NOT NULL,
+            description TEXT,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (project_id, usage_type_id),
+            FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+            FOREIGN KEY (usage_type_id) REFERENCES usage_types(type_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    ");
+    
     // 創建評論表
     $conn->exec("
         CREATE TABLE IF NOT EXISTS comments (
             comment_id INT PRIMARY KEY AUTO_INCREMENT,
-            wish_id INT NOT NULL,
+            project_id INT NOT NULL,
             user_id INT NOT NULL,
             content TEXT NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (wish_id) REFERENCES wishes(wish_id) ON DELETE CASCADE,
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            FOREIGN KEY (project_id) REFERENCES projects(project_id) ON DELETE CASCADE,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-
-    // 創建通知表
+    
+    // 創建3D列印機資料表
     $conn->exec("
-        CREATE TABLE IF NOT EXISTS notifications (
-            notification_id INT PRIMARY KEY AUTO_INCREMENT,
+        CREATE TABLE IF NOT EXISTS printers (
+            printer_id INT PRIMARY KEY AUTO_INCREMENT,
             user_id INT NOT NULL,
-            type ENUM('wish_accepted', 'wish_completed', 'new_comment', 'system') NOT NULL,
-            content TEXT NOT NULL,
-            is_read BOOLEAN DEFAULT FALSE,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    ");
-
-    // 創建檔案記錄表
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS files (
-            file_id INT PRIMARY KEY AUTO_INCREMENT,
-            user_id INT NOT NULL,
-            filename VARCHAR(255) NOT NULL,
-            original_filename VARCHAR(255) NOT NULL,
-            mime_type VARCHAR(100) NOT NULL,
-            file_size INT NOT NULL,
-            file_path VARCHAR(255) NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    ");
-
-    // 創建 API 金鑰表
-    $conn->exec("
-        CREATE TABLE IF NOT EXISTS api_keys (
-            key_id INT PRIMARY KEY AUTO_INCREMENT,
-            user_id INT NOT NULL,
-            api_key VARCHAR(64) NOT NULL UNIQUE,
+            name VARCHAR(100) NOT NULL,
             description TEXT,
-            active BOOLEAN DEFAULT TRUE,
+            specifications TEXT,
+            status ENUM('available', 'busy', 'maintenance') DEFAULT 'available',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            last_used_at TIMESTAMP NULL,
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-
-    // 創建 API 請求記錄表
+    
+    // 創建報價表
     $conn->exec("
-        CREATE TABLE IF NOT EXISTS api_requests (
-            request_id INT PRIMARY KEY AUTO_INCREMENT,
+        CREATE TABLE IF NOT EXISTS quotes (
+            quote_id INT PRIMARY KEY AUTO_INCREMENT,
+            project_id INT NOT NULL,
             user_id INT NOT NULL,
-            endpoint VARCHAR(255),
-            method VARCHAR(10),
-            ip_address VARCHAR(45),
+            printer_id INT NULL,
+            price DECIMAL(10,2) NOT NULL,
+            description TEXT,
+            estimated_time INT,
+            status ENUM('pending', 'accepted', 'rejected') DEFAULT 'pending',
+            reward_claimed BOOLEAN DEFAULT FALSE,
+            reward_claimed_at TIMESTAMP NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            FOREIGN KEY (user_id) REFERENCES users(user_id) ON DELETE CASCADE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            FOREIGN KEY (project_id) REFERENCES projects(project_id),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            FOREIGN KEY (printer_id) REFERENCES printers(printer_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-
-    // 創建 CSRF 令牌表
+    
+    // 創建印幣交易記錄表
     $conn->exec("
-        CREATE TABLE IF NOT EXISTS csrf_tokens (
-            token_id INT PRIMARY KEY AUTO_INCREMENT,
-            token VARCHAR(64) NOT NULL UNIQUE,
+        CREATE TABLE IF NOT EXISTS coin_transactions (
+            transaction_id INT PRIMARY KEY AUTO_INCREMENT,
+            user_id INT NOT NULL,
+            amount DECIMAL(10,2) NOT NULL,
+            type ENUM('deposit', 'withdraw', 'reward', 'earn', 'refund') NOT NULL,
+            status ENUM('pending', 'completed', 'failed', 'cancelled') DEFAULT 'pending',
+            reference_id INT NULL,
+            reference_type VARCHAR(50) NULL,
+            description TEXT,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            expires_at TIMESTAMP NOT NULL,
-            used BOOLEAN DEFAULT FALSE
-        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-
-    // 創建索引以提升性能
+    
+    // 創建用戶印幣餘額表
     $conn->exec("
-        CREATE INDEX IF NOT EXISTS idx_users_email ON users(email);
-        CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
-        CREATE INDEX IF NOT EXISTS idx_wishes_status ON wishes(status);
-        CREATE INDEX IF NOT EXISTS idx_wishes_created_at ON wishes(created_at);
-        CREATE INDEX IF NOT EXISTS idx_comments_created_at ON comments(created_at);
-        CREATE INDEX IF NOT EXISTS idx_notifications_user_read ON notifications(user_id, is_read);
-        CREATE INDEX IF NOT EXISTS idx_api_keys_key ON api_keys(api_key);
-        CREATE INDEX IF NOT EXISTS idx_csrf_tokens_token ON csrf_tokens(token);
+        CREATE TABLE IF NOT EXISTS user_coins (
+            user_id INT PRIMARY KEY,
+            balance DECIMAL(10,2) NOT NULL DEFAULT 0,
+            total_earned DECIMAL(10,2) NOT NULL DEFAULT 0,
+            total_spent DECIMAL(10,2) NOT NULL DEFAULT 0,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     ");
-
-    // 創建預設管理員帳戶
-    $admin_password = password_hash('admin123', PASSWORD_DEFAULT);
-    $conn->exec("
-        INSERT IGNORE INTO users (username, email, password, role, email_verified)
-        VALUES ('admin', 'admin@3dstumake.com', '$admin_password', 'admin', TRUE)
-    ");
-
+    
+    // 確保上傳目錄存在
+    $upload_dirs = [
+        '../../uploads/images',
+        '../../uploads/models'
+    ];
+    
+    foreach ($upload_dirs as $dir) {
+        if (!file_exists($dir)) {
+            mkdir($dir, 0777, true);
+        }
+    }
+    
     // 提交事務
     $conn->commit();
+    
     echo "資料庫初始化成功！\n";
-    echo "預設管理員帳戶：\n";
-    echo "用戶名：admin\n";
-    echo "密碼：admin123\n";
-    echo "請立即登入並修改密碼！";
-
+    
 } catch (Exception $e) {
-    // 回滾事務
-    $conn->rollBack();
-    echo "資料庫初始化錯誤: " . $e->getMessage();
-} 
+    // 發生錯誤時回滾事務
+    if ($conn) {
+        $conn->rollBack();
+    }
+    echo "錯誤：" . $e->getMessage() . "\n";
+}
+?> 

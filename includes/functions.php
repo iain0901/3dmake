@@ -1,129 +1,206 @@
 <?php
-
+// 用戶相關函數
 function is_logged_in() {
     return isset($_SESSION['user_id']);
 }
 
+function get_user_id() {
+    return $_SESSION['user_id'] ?? null;
+}
+
+function get_user_role() {
+    return $_SESSION['user_role'] ?? null;
+}
+
 function is_admin() {
-    return isset($_SESSION['user_role']) && $_SESSION['user_role'] === 'admin';
+    return get_user_role() === 'admin';
 }
 
 function is_creator() {
-    return isset($_SESSION['user_role']) && $_SESSION['user_role'] === 'creator';
+    return get_user_role() === 'creator';
 }
 
-function redirect($url) {
-    header("Location: $url");
-    exit();
+// 安全相關函數
+function sanitize_input($input) {
+    if (is_array($input)) {
+        return array_map('sanitize_input', $input);
+    }
+    return htmlspecialchars(trim($input), ENT_QUOTES, 'UTF-8');
 }
 
+function validate_email($email) {
+    return filter_var($email, FILTER_VALIDATE_EMAIL);
+}
+
+function generate_csrf_token() {
+    if (empty($_SESSION['csrf_token'])) {
+        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
+    }
+    return $_SESSION['csrf_token'];
+}
+
+function validate_csrf_token() {
+    if (empty($_POST['csrf_token']) || empty($_SESSION['csrf_token']) || 
+        !hash_equals($_SESSION['csrf_token'], $_POST['csrf_token'])) {
+        throw new Exception('CSRF 驗證失敗');
+    }
+}
+
+// 檔案處理函數
+function handle_file_upload($file, $type, $allowed_extensions = []) {
+    try {
+        if ($file['error'] !== UPLOAD_ERR_OK) {
+            throw new Exception('檔案上傳失敗：' . get_upload_error_message($file['error']));
+        }
+        
+        $file_info = pathinfo($file['name']);
+        $extension = strtolower($file_info['extension']);
+        
+        if (!empty($allowed_extensions) && !in_array($extension, $allowed_extensions)) {
+            throw new Exception('不支援的檔案格式');
+        }
+        
+        if ($file['size'] > MAX_FILE_SIZE) {
+            throw new Exception('檔案大小超過限制');
+        }
+        
+        $upload_dir = UPLOAD_PATH . '/' . $type;
+        if (!file_exists($upload_dir)) {
+            mkdir($upload_dir, 0777, true);
+        }
+        
+        $filename = uniqid() . '.' . $extension;
+        $filepath = $upload_dir . '/' . $filename;
+        
+        if (!move_uploaded_file($file['tmp_name'], $filepath)) {
+            throw new Exception('檔案移動失敗');
+        }
+        
+        return [
+            'success' => true,
+            'path' => $type . '/' . $filename,
+            'original_name' => $file['name'],
+            'mime_type' => $file['type'],
+            'size' => $file['size']
+        ];
+        
+    } catch (Exception $e) {
+        return [
+            'success' => false,
+            'error' => $e->getMessage()
+        ];
+    }
+}
+
+function get_upload_error_message($error_code) {
+    return match($error_code) {
+        UPLOAD_ERR_INI_SIZE => '檔案超過 PHP 設定的上傳限制',
+        UPLOAD_ERR_FORM_SIZE => '檔案超過表單設定的上傳限制',
+        UPLOAD_ERR_PARTIAL => '檔案只有部分被上傳',
+        UPLOAD_ERR_NO_FILE => '沒有檔案被上傳',
+        UPLOAD_ERR_NO_TMP_DIR => '找不到暫存資料夾',
+        UPLOAD_ERR_CANT_WRITE => '無法寫入檔案',
+        UPLOAD_ERR_EXTENSION => '檔案上傳被 PHP 擴充功能停止',
+        default => '未知的上傳錯誤'
+    };
+}
+
+// 訊息處理函數
 function set_flash_message($type, $message) {
-    $_SESSION['flash'] = [
+    $_SESSION['flash_message'] = [
         'type' => $type,
         'message' => $message
     ];
 }
 
 function get_flash_message() {
-    if (isset($_SESSION['flash'])) {
-        $flash = $_SESSION['flash'];
-        unset($_SESSION['flash']);
-        return $flash;
+    if (isset($_SESSION['flash_message'])) {
+        $message = $_SESSION['flash_message'];
+        unset($_SESSION['flash_message']);
+        return $message;
     }
     return null;
 }
 
-function validate_csrf_token() {
-    if (!isset($_POST['csrf_token']) || !isset($_SESSION['csrf_token']) || 
-        $_POST['csrf_token'] !== $_SESSION['csrf_token']) {
-        set_flash_message('danger', '無效的請求');
-        redirect('/');
+// 導向函數
+function redirect($url) {
+    header("Location: $url");
+    exit;
+}
+
+// 印幣相關函數
+function format_coin_amount($amount) {
+    return number_format($amount);
+}
+
+function get_user_coin_balance($user_id) {
+    try {
+        $db = Database::getInstance();
+        $stmt = $db->prepare("
+            SELECT balance 
+            FROM user_coins 
+            WHERE user_id = ?
+        ");
+        $stmt->execute([$user_id]);
+        $result = $stmt->fetch(PDO::FETCH_ASSOC);
+        return $result ? $result['balance'] : 0;
+    } catch (Exception $e) {
+        error_log($e->getMessage());
+        return 0;
     }
 }
 
-function generate_csrf_token() {
-    if (!isset($_SESSION['csrf_token'])) {
-        $_SESSION['csrf_token'] = bin2hex(random_bytes(32));
-    }
-    return $_SESSION['csrf_token'];
-}
-
-function sanitize_input($data) {
-    if (is_array($data)) {
-        return array_map('sanitize_input', $data);
-    }
-    return htmlspecialchars(trim($data), ENT_QUOTES, 'UTF-8');
-}
-
+// 日期時間相關函數
 function format_date($date) {
-    return date('Y-m-d H:i', strtotime($date));
+    return date('Y/m/d', strtotime($date));
 }
 
-function get_user_notifications_count() {
-    if (!is_logged_in()) return 0;
-    
-    $db = Database::getInstance();
-    $stmt = $db->getConnection()->prepare("
-        SELECT COUNT(*) as count 
-        FROM notifications 
-        WHERE user_id = ? AND is_read = 0
-    ");
-    $stmt->execute([$_SESSION['user_id']]);
-    $result = $stmt->fetch();
-    return $result['count'];
+function format_datetime($datetime) {
+    return date('Y/m/d H:i', strtotime($datetime));
 }
 
-// 錯誤處理
-function handle_error($errno, $errstr, $errfile, $errline) {
-    $error_message = "Error [$errno] $errstr in $errfile on line $errline";
-    error_log($error_message);
+function get_time_ago($datetime) {
+    $time = strtotime($datetime);
+    $now = time();
+    $diff = $now - $time;
     
-    if (ini_get('display_errors')) {
-        echo "<div style='color:red;'>An error occurred. Please try again later.</div>";
+    return match(true) {
+        $diff < 60 => '剛剛',
+        $diff < 3600 => floor($diff / 60) . '分鐘前',
+        $diff < 86400 => floor($diff / 3600) . '小時前',
+        $diff < 604800 => floor($diff / 86400) . '天前',
+        $diff < 2592000 => floor($diff / 604800) . '週前',
+        $diff < 31536000 => floor($diff / 2592000) . '個月前',
+        default => floor($diff / 31536000) . '年前'
+    };
+}
+
+// 專案相關函數
+function get_project_status_text($status) {
+    return match($status) {
+        'pending' => '等待中',
+        'in_progress' => '進行中',
+        'completed' => '已完成',
+        'cancelled' => '已取消',
+        default => '未知狀態'
+    };
+}
+
+function get_project_status_class($status) {
+    return match($status) {
+        'pending' => 'warning',
+        'in_progress' => 'info',
+        'completed' => 'success',
+        'cancelled' => 'secondary',
+        default => 'secondary'
+    };
+}
+
+// 錯誤處理函數
+function log_error($message, $context = []) {
+    $log_message = date('Y-m-d H:i:s') . ' - ' . $message;
+    if (!empty($context)) {
+        $log_message .= ' - ' . json_encode($context, JSON_UNESCAPED_UNICODE);
     }
-    return true;
-}
-
-set_error_handler('handle_error');
-
-// 異常處理
-function handle_exception($exception) {
-    $error_message = "Exception: " . $exception->getMessage() . 
-                    " in " . $exception->getFile() . 
-                    " on line " . $exception->getLine();
-    error_log($error_message);
-    
-    if (ini_get('display_errors')) {
-        echo "<div style='color:red;'>An error occurred. Please try again later.</div>";
-    }
-}
-
-set_exception_handler('handle_exception');
-
-function set_remember_me_cookie($user_id, $token) {
-    $cookie_options = [
-        'expires' => time() + COOKIE_LIFETIME,
-        'path' => '/',
-        'domain' => '',
-        'secure' => true,
-        'httponly' => true,
-        'samesite' => 'Lax'
-    ];
-    
-    setcookie('remember_token', $token, $cookie_options);
-    setcookie('user_id', $user_id, $cookie_options);
-}
-
-function clear_remember_me_cookie() {
-    $cookie_options = [
-        'expires' => time() - 3600,
-        'path' => '/',
-        'domain' => '',
-        'secure' => true,
-        'httponly' => true,
-        'samesite' => 'Lax'
-    ];
-    
-    setcookie('remember_token', '', $cookie_options);
-    setcookie('user_id', '', $cookie_options);
+    error_log($log_message);
 } 

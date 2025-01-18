@@ -7,20 +7,19 @@ class Database {
     
     private function __construct() {
         try {
-            $this->conn = new PDO(
-                "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=utf8mb4",
-                DB_USER,
-                DB_PASS,
-                [
-                    PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
-                    PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
-                    PDO::ATTR_EMULATE_PREPARES => false,
-                    PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci"
-                ]
-            );
-        } catch(PDOException $e) {
-            error_log("Database Connection Error: " . $e->getMessage());
-            throw new Exception("資料庫連接失敗：請檢查連接設定");
+            $dsn = "mysql:host=" . DB_HOST . ";dbname=" . DB_NAME . ";charset=" . DB_CHARSET;
+            $options = [
+                PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+                PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+                PDO::ATTR_EMULATE_PREPARES => false,
+                PDO::MYSQL_ATTR_INIT_COMMAND => "SET NAMES " . DB_CHARSET
+            ];
+            
+            $this->conn = new PDO($dsn, DB_USER, DB_PASS, $options);
+            
+        } catch (PDOException $e) {
+            error_log("資料庫連接錯誤：" . $e->getMessage());
+            throw new Exception("無法連接到資料庫，請稍後再試");
         }
     }
     
@@ -32,12 +31,34 @@ class Database {
     }
     
     public function getConnection() {
-        if ($this->conn === null) {
-            throw new Exception("資料庫連接未初始化");
-        }
         return $this->conn;
     }
     
     private function __clone() {}
+    
     public function __wakeup() {}
+    
+    public function beginTransaction() {
+        return $this->conn->beginTransaction();
+    }
+    
+    public function commit() {
+        return $this->conn->commit();
+    }
+    
+    public function rollBack() {
+        return $this->conn->rollBack();
+    }
+    
+    public function prepare($sql) {
+        return $this->conn->prepare($sql);
+    }
+    
+    public function lastInsertId() {
+        return $this->conn->lastInsertId();
+    }
+    
+    public function quote($value) {
+        return $this->conn->quote($value);
+    }
 } 
